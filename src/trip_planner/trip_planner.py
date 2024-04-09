@@ -102,7 +102,7 @@ class MapMaker:
         return MapMaker(cache=cache, cached_resolver=resolver)
 
     def _resolve_gmaps_url(self, url: str) -> str:
-        if not re.match("https://goo.gl/maps/.*", url):
+        if not is_short_map_url(url):
             raise ValueError(f"requires shortened google-maps url, got {url}")
 
         return self._cached_resolver(url)
