@@ -16,26 +16,13 @@ class Coords(NamedTuple):
     lon: float
     lat:float
 
-@attrs.frozen
-class Location:
-    name: str
-    coords: Coords
-    maps_link: str
 
 def resolve_maps_link(url:str)->str:
     response = httpx.get(url)
     if response.is_redirect and response.has_redirect_location:
         return response.headers["location"]
 
-"""
-https://www.google.com/maps/place/BouBou's/@38.7171315,-9.1507597,17z/data=!3m1!4b1!4m6!3m5!1s0xd193337c1ee5acf:0xb608000d39887dca!8m2!3d38.7171315!4d-9.1507597!16s%2Fg%2F11g0h21t0g?entry=ttu
-"""
-def parse_coords(coords:str)->Coords:
-    if not coords.startswith("@") or not coords.endswith("z"):
-        raise ValueError(f"Invalid coordinates: {coords}")
-    lat, lon, _ignored = coords.removeprefix("@").removesuffix("z").split(",")
 
-    return Coords( lon=float(lon), lat=float(lat), )
 
 def coords_from_data(data:str):
     if not data.startswith("data=!"):
@@ -60,25 +47,6 @@ def is_long_map_url(url:str)->bool:
     return bool(re.match("https://www.google.com/maps/.*", url))
 def is_maps_url(url:str)->bool:
     return is_short_map_url(url) or is_long_map_url(url)
-def parse_link(url:str)->Location:
-    if is_short_map_url(url):
-        full_link = resolve_maps_link(url)
-    elif is_long_map_url(url):
-        full_link = url
-    else:
-        raise ValueError(f"not a maps URL: {url}")
-
-    path = urllib3.util.parse_url(full_link).path
-
-    if path.startswith("/maps/place/"):
-        _, _maps, _place, name, coords, data = path.split("/")
-
-        # return Location(name=name, coords=parse_coords(coords), maps_link = url)
-
-        coords = coords_from_data(data)
-        return Location(name=name, coords=coords, maps_link=url)
-
-    raise ValueError(f"unsupported path: {path}")
 
 def get_coords_from_url(url:str)->Coords:
     data= urllib3.util.parse_url(url).path.rpartition("/")[-1]
@@ -158,24 +126,7 @@ def main(input_path:Path):
 
     with input_path.open("rb") as f:
         doc:Document = Document(f)
-    #
-    # kml = simplekml.Kml()
-    # folder:simplekml.Folder = kml.newfolder(name="From document")
-    #
-    # for link in get_links(doc):
-    #     if not is_maps_url(link.address):
-    #         continue
-    #
-    #     try:
-    #         coords = parse_link(link.address).coords
-    #         print(link.text, coords)
-    #
-    #         folder.newpoint(name=link.text, coords=[coords])
-    #     except Exception:
-    #         pass
-    #
-    #
-    # kml.save("../../data/lisbon.kml")
+
 
     with MapMaker.with_cache(Path("../../cache")) as map_maker:
         map_maker.map_from_docx(doc, Path("../../data/lisbon2.kml"))
