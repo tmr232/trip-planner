@@ -1,9 +1,10 @@
 from pathlib import Path
-from typing import Iterator, NamedTuple, Callable
+from typing import Iterator, NamedTuple, Callable, Annotated
 
 import attrs
 import diskcache
 import docx
+import typer
 from docx import Document
 import httpx
 import urllib3
@@ -16,6 +17,10 @@ class Coords(NamedTuple):
     lon: float
     lat:float
 
+@attrs.frozen
+class Point:
+    name:str
+    coords: Coords
 
 def resolve_maps_link(url:str)->str:
     response = httpx.get(url)
@@ -65,10 +70,6 @@ def get_gmaps_links(doc:docx.Document)->list[docx.text.hyperlink.Hyperlink]:
 
     return list(_iter())
 
-@attrs.frozen
-class Point:
-    name:str
-    coords: Coords
 
 @attrs.define
 class MapMaker:
@@ -122,15 +123,15 @@ class MapMaker:
 
 
 
-def main(input_path:Path):
+def main(document:Annotated[Path, typer.Argument(help="The document to get map links from")],
+         out:Annotated[Path, typer.Option(help="The output map")], cache:Annotated[Path, typer.Option(help="Cache directory")]):
 
-    with input_path.open("rb") as f:
+    with document.open("rb") as f:
         doc:Document = Document(f)
 
 
-    with MapMaker.with_cache(Path("../../cache")) as map_maker:
-        map_maker.map_from_docx(doc, Path("../../data/lisbon2.kml"))
+    with MapMaker.with_cache(cache) as map_maker:
+        map_maker.map_from_docx(doc, out)
 
 if __name__ == "__main__":
-    main(Path("../../data/Lisbon 2023.docx"))
-    # rich.print(parse_link("https://goo.gl/maps/WyoUHrqEoLR3MiJa6"))
+    typer.run(main)

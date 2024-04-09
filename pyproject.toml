@@ -12,6 +12,9 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 
+[tool.poetry.scripts]
+doc2map = "trip_planner.trip_planner:app"
+
 [tool.poetry.dependencies]
 python = "^3.11"
 
