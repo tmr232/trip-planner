@@ -1,3 +1,4 @@
+import itertools
 import re
 from pathlib import Path
 from typing import Annotated, Callable, Iterator, NamedTuple
@@ -70,7 +71,13 @@ def get_coords_from_url(url: str) -> Coords:
 
 
 def get_links(doc: docx.Document) -> Iterator[docx.text.hyperlink.Hyperlink]:
-    for paragraph in doc.paragraphs:
+    def _table_cell_paragraphs():
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    yield from cell.paragraphs
+
+    for paragraph in itertools.chain(doc.paragraphs, _table_cell_paragraphs()):
         yield from paragraph.hyperlinks
 
 
