@@ -51,7 +51,7 @@ testpaths = [
 ]
 
 
-[tool.ruff]
+[tool.ruff.lint]
 # Avoid automatic removal of unused variables
 unfixable = ['F841'] # unused-variable
 
