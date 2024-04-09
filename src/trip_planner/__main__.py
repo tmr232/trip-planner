@@ -1,4 +1,4 @@
-import typer
-from trip_planner.trip_planner import main
+from trip_planner.trip_planner import app
+
 if __name__ == "__main__":
-    typer.run(main)
+    app()

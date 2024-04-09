@@ -15,7 +15,7 @@ def format(session: Session) -> None:
 
 @nox.session(python=False)
 def lint(session: Session) -> None:
-    session.run("ruff","check", *SOURCE_LOCATIONS)
+    session.run("ruff", "check", *SOURCE_LOCATIONS)
     session.run("mypy", *SOURCE_LOCATIONS)
     session.run("isort", "--check-only", *SOURCE_LOCATIONS)
     session.run("black", "--check", *SOURCE_LOCATIONS)
