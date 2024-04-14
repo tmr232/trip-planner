@@ -126,6 +126,8 @@ class MapMaker:
     def map_from_docx(self, doc: docx.Document, output: Path):
         links = get_gmaps_links(doc)
         points = self._points_from_links(links)
+        # remote duplicates
+        points = list(set(points))
 
         kml = simplekml.Kml()
         folder: simplekml.Folder = kml.newfolder(name="From document")
