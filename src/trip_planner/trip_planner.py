@@ -5,12 +5,14 @@ from typing import Annotated, Callable, Iterator, NamedTuple
 
 import attrs
 import diskcache
+import docx
+import docx.document
 import docx.text.hyperlink
+import docx.text.paragraph
 import httpx
 import simplekml
 import typer
 import urllib3
-from docx import Document
 
 
 class Coords(NamedTuple):
@@ -125,7 +127,7 @@ def get_coords_from_url(url: str) -> Coords:
     return coords
 
 
-def get_links(doc: docx.Document) -> Iterator[docx.text.hyperlink.Hyperlink]:
+def get_links(doc: docx.document.Document) -> Iterator[docx.text.hyperlink.Hyperlink]:
     def _table_cell_paragraphs():
         for table in doc.tables:
             for row in table.rows:
@@ -136,7 +138,7 @@ def get_links(doc: docx.Document) -> Iterator[docx.text.hyperlink.Hyperlink]:
         yield from paragraph.hyperlinks
 
 
-def get_gmaps_links(doc: docx.Document) -> list[docx.text.hyperlink.Hyperlink]:
+def get_gmaps_links(doc: docx.document.Document) -> list[docx.text.hyperlink.Hyperlink]:
     def _iter():
         for link in get_links(doc):
             if is_maps_url(link.address):
@@ -194,7 +196,7 @@ class MapMaker:
 
         return list(_iter())
 
-    def map_from_docx(self, doc: docx.Document, output: Path):
+    def map_from_docx(self, doc: docx.document.Document, output: Path):
         links = get_gmaps_links(doc)
 
         kml = simplekml.Kml()
@@ -234,7 +236,7 @@ def main(
 ):
 
     with document.open("rb") as f:
-        doc: Document = Document(f)
+        doc: docx.document.Document = docx.Document(f)
 
     with MapMaker.with_cache(cache) as map_maker:
         map_maker.map_from_docx(doc, out)
