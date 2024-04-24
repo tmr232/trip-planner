@@ -23,6 +23,11 @@ class Point:
     name: str
     coords: Coords
 
+@attrs.frozen
+class Line:
+    name: str
+    coords: tuple[Coords] = attrs.field(converter=tuple)
+
 
 def resolve_maps_link(url: str) -> str:
     response = httpx.get(url)
@@ -32,6 +37,54 @@ def resolve_maps_link(url: str) -> str:
 
     return response.headers["location"]
 
+def get_data_from_url(url)->str:
+    path = urllib3.util.parse_url(url).path
+    assert path is not None, "a path should always exist"
+    data = path.rpartition("/")[-1]
+    return data
+
+
+def parse_directions_url(url:str)->list[Coords]|None:
+    """
+    https://www.google.com/maps/dir/Magome,+Nakatsugawa,+Gifu,+Japan/Tsumago-juku,+Azuma,+Nagiso,+Kiso+District,+Nagano+399-5302,+Japan/@35.5541856,137.5632207,14z/data=!3m1!4b1!4m14!4m13!1m5!1m1!1s0x601cb71add823007:0x7d766e65361116fa!2m2!1d137.5717516!2d35.5315174!1m5!1m1!1s0x601cb7e4a598bb33:0x87bc2c35315036f6!2m2!1d137.5956667!2d35.5775876!3e2?entry=ttu
+    https://www.google.com/maps/dir/Magome,+Nakatsugawa,+Gifu,+Japan/Tsumago-juku,+Azuma,+Nagiso,+Kiso+District,+Nagano+399-5302,+Japan/Tadachi+%E7%94%B0%E7%AB%8B/@35.5541856,137.5632207,14z/data=!4m20!4m19!1m5!1m1!1s0x601cb71add823007:0x7d766e65361116fa!2m2!1d137.5717516!2d35.5315174!1m5!1m1!1s0x601cb7e4a598bb33:0x87bc2c35315036f6!2m2!1d137.5956667!2d35.5775876!1m5!1m1!1s0x601cc9bd3ccb26ed:0x1b1560620d4ac8d0!2m2!1d137.5489597!2d35.5882476!3e2?entry=ttu
+    """
+    if not is_dir_url(url):
+        return None
+
+    data = get_data_from_url(url)
+    tagged_data = parse_maps_url_data(data)
+
+    def _iter():
+        lat :float|None= None
+        lon :float|None= None
+        for tag, value in tagged_data:
+            if tag == "1d":
+                lon = float(value)
+            elif tag == "2d":
+                lat = float(value)
+
+            if None not in (lat, lon):
+                yield Coords(lat=lat,lon=lon)
+                lat, lon = None, None
+
+    return list(_iter())
+
+
+class MapTaggedData(NamedTuple):
+    tag: str
+    value: str
+def parse_maps_url_data(data:str)->list[MapTaggedData]:
+    """
+    data=!4m20!4m19!1m5!1m1!1s0x601cb71add823007:0x7d766e65361116fa!2m2!1d137.5717516!2d35.5315174!1m5!1m1!1s0x601cb7e4a598bb33:0x87bc2c35315036f6!2m2!1d137.5956667!2d35.5775876!1m5!1m1!1s0x601cc9bd3ccb26ed:0x1b1560620d4ac8d0!2m2!1d137.5489597!2d35.5882476!3e2
+    """
+    if not data.startswith("data=!"):
+        raise ValueError(f"invalid data {data}")
+
+    def _iter():
+        for match in re.finditer(r"!(?P<tag>\d[a-z])(?P<value>[^!]+)", data):
+            yield MapTaggedData(tag=match.group("tag"), value=match.group("value"))
+    return list(_iter())
 
 def coords_from_data(data: str):
     if not data.startswith("data=!"):
@@ -62,12 +115,18 @@ def is_long_map_url(url: str) -> bool:
 def is_maps_url(url: str) -> bool:
     return is_short_map_url(url) or is_long_map_url(url)
 
+def is_dir_url(url:str)->bool:
+    return bool(re.match("https://www.google.com/maps/dir/.*", url))
 
 def get_coords_from_url(url: str) -> Coords:
-    path = urllib3.util.parse_url(url).path
-    assert path is not None, "a path should always exist"
-    data = path.rpartition("/")[-1]
-    return coords_from_data(data)
+    data = get_data_from_url(url)
+    coords = coords_from_data(data)
+    print(f"({url!r}, {coords}),")
+    return coords
+
+
+
+
 
 
 def get_links(doc: docx.Document) -> Iterator[docx.text.hyperlink.Hyperlink]:
@@ -123,16 +182,37 @@ class MapMaker:
 
         return list(_iter())
 
+    def _paths_from_links(self, links:list[docx.text.hyperlink.Hyperlink])->list[Line]:
+        def _iter():
+            for link in links:
+                url = link.address
+                if is_short_map_url(url):
+                    url = self._resolve_gmaps_url(url)
+                if not is_dir_url(url):
+                    continue
+                coords = parse_directions_url(url)
+
+                yield Line(name=link.text, coords=coords)
+
+        return list(_iter())
+
+
     def map_from_docx(self, doc: docx.Document, output: Path):
         links = get_gmaps_links(doc)
-        points = self._points_from_links(links)
-        # remote duplicates
-        points = list(set(points))
+
 
         kml = simplekml.Kml()
         folder: simplekml.Folder = kml.newfolder(name="From document")
+
+        points = self._points_from_links(links)
+        points = list(set(points))
         for point in points:
             folder.newpoint(name=point.name, coords=[point.coords])
+
+        lines = self._paths_from_links(links)
+        lines = list(set(lines))
+        for line in lines:
+            folder.newlinestring(name=line.name, coords=line.coords)
 
         kml.save(str(output))
 
