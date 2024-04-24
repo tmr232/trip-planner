@@ -28,10 +28,20 @@ def style_from_code(icon_code: str) -> simplekml.Style:
     return style
 
 
-def create_icon_style(name: str = DEFAULT_ICON_NAME, color: str = DEFAULT_ICON_COLOR) -> simplekml.Style:
+def get_icon_code(
+    name: str = DEFAULT_ICON_NAME, color: str = DEFAULT_ICON_COLOR
+) -> str:
     icon_number = ICON_NUMBERS[name]
-    return style_from_code(f"{icon_number}-{color}")
+    return f"{icon_number}-{color}"
 
 
-def create_stylemap(name: str = DEFAULT_ICON_NAME, color: str = DEFAULT_ICON_COLOR) -> simplekml.StyleMap:
+def create_icon_style(
+    name: str = DEFAULT_ICON_NAME, color: str = DEFAULT_ICON_COLOR
+) -> simplekml.Style:
+    return style_from_code(get_icon_code(name, color))
+
+
+def create_stylemap(
+    name: str = DEFAULT_ICON_NAME, color: str = DEFAULT_ICON_COLOR
+) -> simplekml.StyleMap:
     return simplekml.StyleMap(create_icon_style(name=name, color=color))
