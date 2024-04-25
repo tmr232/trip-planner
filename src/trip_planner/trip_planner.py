@@ -1,8 +1,8 @@
-import itertools
+import enum
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Annotated, Callable, Iterator, NamedTuple
+from typing import Annotated, Callable, NamedTuple, TypedDict
 
 import attrs
 import diskcache
@@ -18,7 +18,7 @@ import urllib3
 
 from trip_planner import document_parser
 from trip_planner.document_parser import iter_links_with_headings
-from trip_planner.google_maps_helpers import create_stylemap
+from trip_planner.google_maps_helpers import DEFAULT_ICON_COLOR, create_stylemap
 
 
 class Coords(NamedTuple):
@@ -26,11 +26,11 @@ class Coords(NamedTuple):
     lat: float
 
 
-@attrs.frozen
+@attrs.frozen(order=True)
 class Point:
     name: str
     coords: Coords
-    headings: list[str] | None = attrs.field(default=None, hash=False)
+    headings: list[str] = attrs.field(factory=list, eq=False, order=False)
 
 
 @attrs.frozen
@@ -132,53 +132,6 @@ def get_coords_from_url(url: str) -> Coords:
     return coords_from_data(data)
 
 
-def get_links(doc: docx.document.Document) -> Iterator[docx.text.hyperlink.Hyperlink]:
-    def _table_cell_paragraphs():
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    yield from cell.paragraphs
-
-    for paragraph in itertools.chain(doc.paragraphs, _table_cell_paragraphs()):
-        yield from paragraph.hyperlinks
-
-
-def get_gmaps_links(doc: docx.document.Document) -> list[docx.text.hyperlink.Hyperlink]:
-    def _iter():
-        for link in get_links(doc):
-            if is_maps_url(link.address):
-                yield link
-
-    return list(_iter())
-
-
-class GroupPoints:
-    grouper = Callable[[list[Point]], dict[str, list[Point]]]
-
-    @staticmethod
-    def by_headings(points: list[Point]) -> dict[str, list[Point]]:
-        sections = defaultdict(list)
-        for point in points:
-            sections[": ".join(point.headings)].append(point)
-        return dict(sections)
-
-    @staticmethod
-    def null(points: list[Point]) -> dict[str, list[Point]]:
-        return {"": points.copy()}
-
-    @staticmethod
-    def unique(points: list[Point]) -> dict[str, list[Point]]:
-        return {"": list(set(points))}
-
-
-class Styler:
-    styler = Callable[[Point, str], simplekml.StyleMap | None]
-
-    @staticmethod
-    def default(_point: Point, _section: str) -> simplekml.StyleMap | None:
-        return None
-
-
 @attrs.define
 class MapMaker:
     _cache: diskcache.Cache
@@ -213,17 +166,16 @@ class MapMaker:
         self,
         doc: docx.document.Document,
         output: Path,
-        group_points: GroupPoints.grouper = GroupPoints.unique,
     ):
         links = list(iter_links_with_headings(doc))
         for link in links:
             rich.print(link)
         kml = simplekml.Kml()
 
-        stylemaps = {}
+        stylemaps: dict[str, simplekml.StyleMap] = {}
 
-        def _stylemap(name: str):
-            new_stylemap = create_stylemap(name=name)
+        def _stylemap(name: str, color: str = DEFAULT_ICON_COLOR):
+            new_stylemap = create_stylemap(name=name, color=color)
             stylemap = stylemaps.get(name, new_stylemap)
             if stylemap is new_stylemap:
                 # Styles and stylemaps must reside at the top-level of the document for Google Maps
@@ -233,18 +185,19 @@ class MapMaker:
 
         points = self._points_from_links(links)
 
-        sections = group_points(points)
+        groups: defaultdict[Category, set[Point]] = defaultdict(set)
+        for point in points:
+            groups[categorize_point(point)].add(point)
 
-        for section_name, section_points in sections.items():
-            section_folder: simplekml.Folder = kml.newfolder(name=section_name)
-            for section_point in set(section_points):
-                point = section_folder.newpoint(
-                    name=section_point.name, coords=[section_point.coords]
+        for category, grouped_points in groups.items():
+            folder: simplekml.Folder = kml.newfolder(name=category.name)
+
+            for point in sorted(grouped_points):
+                kml_point: simplekml.Point = folder.newpoint(
+                    name=point.name, coords=[point.coords]
                 )
-                if "station" in section_point.name.lower():
-                    point.stylemap = _stylemap("Train")
-                elif "bookings" in " ".join(section_point.headings).lower():
-                    point.stylemap = _stylemap("Hotel")
+                kml_point.stylemap = _stylemap(**category.icon_info)
+
         kml.save(str(output))
 
     def __enter__(self):
@@ -254,6 +207,35 @@ class MapMaker:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._cache.__exit__(None, None, None)
         return False
+
+
+class IconInfo(TypedDict):
+    name: str
+    color: str
+
+
+class Category(enum.Enum):
+    Travel = enum.auto()
+    Hotel = enum.auto()
+    Default = enum.auto()
+
+    @property
+    def icon_info(self) -> IconInfo:
+        match self:
+            case Category.Travel:
+                return IconInfo(name="Train", color="1a237e")
+            case Category.Hotel:
+                return IconInfo(name="Hotel", color="795548")
+            case Category.Default:
+                return IconInfo(name="Pin", color="c2185b")
+
+
+def categorize_point(point: Point) -> Category:
+    if "station" in point.name.lower():
+        return Category.Travel
+    elif "bookings" in " ".join(point.headings).lower():
+        return Category.Hotel
+    return Category.Default
 
 
 app = typer.Typer()
@@ -272,7 +254,7 @@ def main(
         doc: docx.document.Document = docx.Document(f)
 
     with MapMaker.with_cache(cache) as map_maker:
-        map_maker.map_from_docx(doc, out, group_points=GroupPoints.unique)
+        map_maker.map_from_docx(doc, out)
 
 
 if __name__ == "__main__":

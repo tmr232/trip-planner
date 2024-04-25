@@ -46,7 +46,9 @@ def iter_content_with_headings(
 
     for content in _iter_all(document):
         match content:
-            case docx.text.paragraph.Paragraph(style=style, text=text):
+            case docx.text.paragraph.Paragraph(
+                style=style, text=text
+            ) if style is not None:
                 if style.name.startswith("Heading"):
                     heading_level = int(style.name.split(" ")[-1])
 
