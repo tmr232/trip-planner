@@ -41,8 +41,8 @@ def _iter_all(d):
 def iter_content_with_headings(
     document: docx.document.Document,
 ) -> typing.Iterator[ContentWithHierarchy]:
-    headings = []
-    levels = []
+    headings: list[str] = []
+    levels: list[int] = []
 
     for content in _iter_all(document):
         match content:

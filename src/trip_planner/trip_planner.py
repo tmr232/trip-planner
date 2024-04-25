@@ -1,5 +1,6 @@
 import itertools
 import re
+from collections import defaultdict
 from pathlib import Path
 from typing import Annotated, Callable, Iterator, NamedTuple
 
@@ -10,9 +11,14 @@ import docx.document
 import docx.text.hyperlink
 import docx.text.paragraph
 import httpx
+import rich
 import simplekml
 import typer
 import urllib3
+
+from trip_planner import document_parser
+from trip_planner.document_parser import iter_links_with_headings
+from trip_planner.google_maps_helpers import create_stylemap
 
 
 class Coords(NamedTuple):
@@ -24,6 +30,7 @@ class Coords(NamedTuple):
 class Point:
     name: str
     coords: Coords
+    headings: list[str] | None = attrs.field(default=None, hash=False)
 
 
 @attrs.frozen
@@ -122,9 +129,7 @@ def is_dir_url(url: str) -> bool:
 
 def get_coords_from_url(url: str) -> Coords:
     data = get_data_from_url(url)
-    coords = coords_from_data(data)
-    print(f"({url!r}, {coords}),")
-    return coords
+    return coords_from_data(data)
 
 
 def get_links(doc: docx.document.Document) -> Iterator[docx.text.hyperlink.Hyperlink]:
@@ -147,6 +152,33 @@ def get_gmaps_links(doc: docx.document.Document) -> list[docx.text.hyperlink.Hyp
     return list(_iter())
 
 
+class GroupPoints:
+    grouper = Callable[[list[Point]], dict[str, list[Point]]]
+
+    @staticmethod
+    def by_headings(points: list[Point]) -> dict[str, list[Point]]:
+        sections = defaultdict(list)
+        for point in points:
+            sections[": ".join(point.headings)].append(point)
+        return dict(sections)
+
+    @staticmethod
+    def null(points: list[Point]) -> dict[str, list[Point]]:
+        return {"": points.copy()}
+
+    @staticmethod
+    def unique(points: list[Point]) -> dict[str, list[Point]]:
+        return {"": list(set(points))}
+
+
+class Styler:
+    styler = Callable[[Point, str], simplekml.StyleMap | None]
+
+    @staticmethod
+    def default(_point: Point, _section: str) -> simplekml.StyleMap | None:
+        return None
+
+
 @attrs.define
 class MapMaker:
     _cache: diskcache.Cache
@@ -164,54 +196,55 @@ class MapMaker:
 
         return self._cached_resolver(url)
 
-    def _points_from_links(
-        self, links: list[docx.text.hyperlink.Hyperlink]
-    ) -> list[Point]:
-        def _iter():
-            for link in links:
-                url = link.address
-                if is_short_map_url(url):
-                    url = self._resolve_gmaps_url(url)
-                if not is_place_url(url):
-                    continue
-                coords = get_coords_from_url(url)
+    def _point_from_link(self, link: document_parser.Link) -> Point | None:
+        url = link.address
+        if is_short_map_url(url):
+            url = self._resolve_gmaps_url(url)
+        if not is_place_url(url):
+            return None
+        coords = get_coords_from_url(url)
 
-                yield Point(name=link.text, coords=coords)
+        return Point(name=link.text, coords=coords, headings=link.headings)
 
-        return list(_iter())
+    def _points_from_links(self, links: list[document_parser.Link]) -> list[Point]:
+        return list(filter(None, map(self._point_from_link, links)))
 
-    def _paths_from_links(
-        self, links: list[docx.text.hyperlink.Hyperlink]
-    ) -> list[Line]:
-        def _iter():
-            for link in links:
-                url = link.address
-                if is_short_map_url(url):
-                    url = self._resolve_gmaps_url(url)
-                if not is_dir_url(url):
-                    continue
-                coords = parse_directions_url(url)
-
-                yield Line(name=link.text, coords=coords)
-
-        return list(_iter())
-
-    def map_from_docx(self, doc: docx.document.Document, output: Path):
-        links = get_gmaps_links(doc)
-
+    def map_from_docx(
+        self,
+        doc: docx.document.Document,
+        output: Path,
+        group_points: GroupPoints.grouper = GroupPoints.unique,
+    ):
+        links = list(iter_links_with_headings(doc))
+        for link in links:
+            rich.print(link)
         kml = simplekml.Kml()
-        folder: simplekml.Folder = kml.newfolder(name="From document")
+
+        stylemaps = {}
+
+        def _stylemap(name: str):
+            new_stylemap = create_stylemap(name=name)
+            stylemap = stylemaps.get(name, new_stylemap)
+            if stylemap is new_stylemap:
+                # Styles and stylemaps must reside at the top-level of the document for Google Maps
+                # to use them.
+                kml.stylemaps.append(stylemap)
+            return stylemap
 
         points = self._points_from_links(links)
-        points = list(set(points))
-        for point in points:
-            folder.newpoint(name=point.name, coords=[point.coords])
 
-        lines = self._paths_from_links(links)
-        lines = list(set(lines))
-        for line in lines:
-            folder.newlinestring(name=line.name, coords=line.coords)
+        sections = group_points(points)
 
+        for section_name, section_points in sections.items():
+            section_folder: simplekml.Folder = kml.newfolder(name=section_name)
+            for section_point in set(section_points):
+                point = section_folder.newpoint(
+                    name=section_point.name, coords=[section_point.coords]
+                )
+                if "station" in section_point.name.lower():
+                    point.stylemap = _stylemap("Train")
+                elif "bookings" in " ".join(section_point.headings).lower():
+                    point.stylemap = _stylemap("Hotel")
         kml.save(str(output))
 
     def __enter__(self):
@@ -239,7 +272,7 @@ def main(
         doc: docx.document.Document = docx.Document(f)
 
     with MapMaker.with_cache(cache) as map_maker:
-        map_maker.map_from_docx(doc, out)
+        map_maker.map_from_docx(doc, out, group_points=GroupPoints.unique)
 
 
 if __name__ == "__main__":
