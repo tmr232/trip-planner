@@ -215,19 +215,25 @@ class IconInfo(TypedDict):
 
 
 class Category(enum.Enum):
+    Default = enum.auto()
+    Museum = enum.auto()
     Travel = enum.auto()
     Hotel = enum.auto()
-    Default = enum.auto()
+    Castle = enum.auto()
 
     @property
     def icon_info(self) -> IconInfo:
         match self:
+            case Category.Default:
+                return IconInfo(name="Pin", color="c2185b")
             case Category.Travel:
                 return IconInfo(name="Train", color="1a237e")
             case Category.Hotel:
                 return IconInfo(name="Hotel", color="795548")
-            case Category.Default:
-                return IconInfo(name="Pin", color="c2185b")
+            case Category.Museum:
+                return IconInfo(name="Museum", color="d55322")
+            case Category.Castle:
+                return IconInfo(name="Historic Building", color="424242")
 
 
 def categorize_point(point: Point) -> Category:
@@ -235,6 +241,10 @@ def categorize_point(point: Point) -> Category:
         return Category.Travel
     elif "bookings" in " ".join(point.headings).lower():
         return Category.Hotel
+    elif "museum" in point.name.lower():
+        return Category.Museum
+    elif "castle" in point.name.lower():
+        return Category.Castle
     return Category.Default
 
 
